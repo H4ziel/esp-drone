@@ -1,6 +1,4 @@
 #include <stddef.h>
-#include <stdint.h>
-#include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
 
@@ -19,6 +17,7 @@
 #include "driver/i2c.h"
 #include "mpu6050_regs.h"
 #include "esp_timer.h"
+#include "pid/pid.h"
 
 #define _USE_MATH_DEFINES
 
@@ -34,10 +33,8 @@
 #define SCL_PIN GPIO_NUM_22
 #define I2C_NUM I2C_NUM_0
 
-SemaphoreHandle_t xSemaphore;
-
 uint8_t MPU_ADDR = 0x68; // or 0x69, AD0 is the least bit of this reg, AD0 -> 3V3 = 1 -> addr = 0x69; AD -> 0V = 0 -> addr = 0x68
-                         //
+
 static uint16_t dutyc = 0;
 float sample_period = 0.001f;
 float x_gyro_bias = -2.41;
@@ -52,6 +49,7 @@ const float z_acc_corrector = 14418.0;
 
 static const char* TAG_MPU = "MPU6050";
 static const char* TAG_PWM = "PWM";
+static const char* TAG_PID = "PID";
 
 typedef struct MPU6050{
     float xg_gyro;
@@ -69,17 +67,20 @@ typedef struct MPU6050{
 }mpu6050_t;
 
 typedef struct KalmanFilter{
-        float Rv; // noise by measurements (accelerometer)
-        float Rw; // noise by model (gyroscope)
-        float x[2]; // predicted state: [angle, speed angular]
-        float P[2][2]; // covariance matrix of predicted errors -> calculate how much uncertain is the filter
-        float M[2][2]; // covariace matrix of propagation of uncertain
-        float Gamma[2]; // this matrix indicate how the input influence the state
-        float Phi[2][2]; // this matrix indicate the temporal advancement of the state
-        float C[2]; // Observation Matrix -> extracts which measurement is needed for the calculation, for this application, we need only the angle of state -> C = {1, 0};
-        float I[2][2]; // Idendity matrix
-        float K[2]; // Kalman Gain
+    float Rv; // noise by measurements (accelerometer)
+    float Rw; // noise by model (gyroscope)
+    float x[2]; // predicted state: [angle, speed angular]
+    float P[2][2]; // covariance matrix of predicted errors -> calculate how much uncertain is the filter
+    float M[2][2]; // covariace matrix of propagation of uncertain
+    float Gamma[2]; // this matrix indicate how the input influence the state
+    float Phi[2][2]; // this matrix indicate the temporal advancement of the state
+    float C[2]; // Observation Matrix -> extracts which measurement is needed for the calculation, for this application, we need only the angle of state -> C = {1, 0};
+    float I[2][2]; // Idendity matrix
+    float K[2]; // Kalman Gain
 }kalman_filter_t;
+
+pid_t pitch_pid;
+pid_t roll_pid;
 
 esp_err_t i2c_master_init(void);
 mpu6050_t* setup_mpu();
@@ -283,7 +284,21 @@ void mpu_task(void* pvParameters){
 
         vTaskDelay(pdMS_TO_TICKS(50));
     }
+    free(mpu);
+    free(Kfilter_roll);
+    free(Kfilter_pitch);
     vTaskDelete(NULL);
+}
+
+void pid_task(void* pvParameters){
+    mpu6050_t* mpu = (mpu6050_t*)pvParameters;
+
+    while(1){
+
+    }
+    free(pitch_pid);
+    free(roll_pid);
+    free(mpu);
 }
 
 void app_main(void){
@@ -293,6 +308,10 @@ void app_main(void){
     //mpu init
     mpu6050_t* mpu;
     mpu = setup_mpu();
+
+    //pid init
+    pid_init(pitch_pid);
+    pid_init(roll_pid);
 
     //pwm
     esp_err_t ret_pwm = setup_pwm(PWM1_PIN, PWM1_CHANNEL, PWM1_TIMER, 5e3);
@@ -306,6 +325,7 @@ void app_main(void){
 
     xTaskCreatePinnedToCore(pwm_task, "TASK PWM", 2000, NULL, 1, NULL, 0);
     xTaskCreatePinnedToCore(mpu_task, "TASK MPU6050", 3000, (void*)&mpu, 1, NULL, 1);
+    xTaskCreatePinnedToCore(pid_task, "TASK PID", 2500, (void*)&mpu, 1, NULL, 0);
 }
 
 
