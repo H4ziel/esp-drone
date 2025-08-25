@@ -1,8 +1,9 @@
 #include "pid.h"
 #include <stdlib.h>
+#include <math.h>
 
-pid_t* pid_init(pid_t* p){
-    p = (pid_t*)malloc(sizeof(pid_t));
+pid_t* pid_init(void){
+    pid_t* p = (pid_t*)malloc(sizeof(pid_t));
     p->kp = 0.9;
     p->ki = 0.06;
     p->kd = 0.0001;
@@ -21,7 +22,11 @@ float pid_control(pid_t* p, float set_point, float current_meas, float Ts){
 
     P = error * p->kp;
 
-    p->i_error += error*Ts;
+    if(fabs(error) > 0.5)
+        p->i_error += error*Ts;
+
+    if(p->i_error > 20) p->i_error = 20;
+    if(p->i_error < -20) p->i_error = -20;
 
     I = p->ki * p->i_error;
 
@@ -31,13 +36,8 @@ float pid_control(pid_t* p, float set_point, float current_meas, float Ts){
 
     out = P + I + D;
 
-    if(p->MAX < out){
-        p->i_error = 0;
-        out = p->MAX;
-    }else if(p->MIN > out){
-        p->i_error = 0;
-        out = p->MIN;
-    }
+    if(p->MAX < out) out = p->MAX;
+    if(p->MIN > out) out = p->MIN;
 
     return out;
 }
