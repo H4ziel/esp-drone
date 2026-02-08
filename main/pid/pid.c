@@ -2,17 +2,16 @@
 #include <stdlib.h>
 #include <math.h>
 
-pid_t* pid_init(void){
-    pid_t* p = (pid_t*)malloc(sizeof(pid_t));
-    p->kp = 0.9;
-    p->ki = 0.06;
-    p->kd = 0.0001;
-    p->i_error = 0;
-    p->MAX = 500;
-    p->MIN = -500;
-    p->last_error = 0;
+void pid_init(pid_t* p){
+    if(p == NULL) return;
 
-    return p;
+    p->kp = 15.0;
+    p->ki = 0.05;
+    p->kd = 2.0;
+    p->i_error = 0;
+    p->MAX = 1500.0f; //
+    p->MIN = -1500.0f;
+    p->last_error = 0;
 }
 
 float pid_control(pid_t* p, float set_point, float current_meas, float Ts){
@@ -22,14 +21,17 @@ float pid_control(pid_t* p, float set_point, float current_meas, float Ts){
 
     P = error * p->kp;
 
-    if(fabs(error) > 0.5)
-        p->i_error += error*Ts;
+    p->i_error += error*Ts;
+	I = p->ki * p->i_error;
 
-    if(p->i_error > 20) p->i_error = 20;
-    if(p->i_error < -20) p->i_error = -20;
-
-    I = p->ki * p->i_error;
-
+    if(I > (p->MAX/5)){
+        I = p->MAX/5;
+        p->i_error = (p->MAX/5) / p->ki;
+    }
+    if(I < (p->MIN/5)){
+        I = p->MIN/5; //~20% of min out
+        p->i_error = (p->MIN/5) / p->ki;
+    }
     D = p->kd * ((error - p->last_error) / Ts);
 
     p->last_error = error;

@@ -6,30 +6,26 @@
 #include "driver/adc_types_legacy.h"
 #include "freertos/idf_additions.h"
 #include "freertos/projdefs.h"
-#include "hal/adc_types.h"
 #include "hal/i2c_types.h"
 #include "portmacro.h"
 #include "pwm/pwm.h"
 
-#include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 
 #include "esp_log.h"
 #include "esp_err.h"
 #include "driver/adc.h"
-#include "driver/gpio.h"
 #include "driver/i2c.h"
 #include "mpu6050_regs.h"
 #include "esp_timer.h"
 #include "pid/pid.h"
 #include "lora.h"
 
-#define _USE_MATH_DEFINES
-
 #define PWM1_PIN GPIO_NUM_2
 #define PWM1_TIMER LEDC_TIMER_1
 #define PWM1_CHANNEL LEDC_CHANNEL_0
+#define DUTY_CYCLE_BASE (uint32_t)((1UL << PWM_DUTY_RESOLUTION) -1)/2
 
 #define PWM2_PIN GPIO_NUM_4
 #define PWM2_TIMER LEDC_TIMER_0
@@ -43,6 +39,8 @@ uint8_t MPU_ADDR = 0x68; // or 0x69, AD0 is the least bit of this reg, AD0 -> 3V
 
 static uint16_t dutyc = 0;
 float sample_period = 0.001f;
+float pitch_bias = -9.1;
+float roll_bias = 3.1;
 float x_gyro_bias = 0;//-2.41;
 float y_gyro_bias = 0;//-0.39;
 float z_gyro_bias = 0;//-0.57;
@@ -57,6 +55,14 @@ static const char* TAG_MPU  = "MPU6050";
 static const char* TAG_PWM  = "PWM";
 static const char* TAG_PID  = "PID";
 static const char* TAG_LORA = "LORA";
+
+typedef enum{
+    MOTOR_FL = 0,
+    MOTOR_FR,
+    MOTOR_BL,
+    MOTOR_BR,
+    MOTOR
+}motor_t;
 
 typedef struct MPU6050{
     float xg_gyro;
@@ -75,7 +81,7 @@ typedef struct MPU6050{
 
 typedef struct KalmanFilter{
     float Rv; // noise by measurements (accelerometer)
-    float Rw; // noise by model (gyroscope)
+    float Rw; // noise by model (gyroscope)]
     float x[2]; // predicted state: [angle, speed angular]
     float P[2][2]; // covariance matrix of predicted errors -> calculate how much uncertain is the filter
     float M[2][2]; // covariace matrix of propagation of uncertain
@@ -86,8 +92,13 @@ typedef struct KalmanFilter{
     float K[2]; // Kalman Gain
 }kalman_filter_t;
 
+typedef struct CONTROL{
+    uint16_t out[MOTOR];
+    uint16_t throttle;
+}control_t;
+
 esp_err_t i2c_master_init(void);
-mpu6050_t* setup_mpu();
+void setup_mpu(mpu6050_t* mpu);
 void setup_i2c();
 void setup_sx1276();
 void kalman_filter(kalman_filter_t* k, float gyro, float acc_angle, float Ts);
@@ -95,6 +106,7 @@ esp_err_t mpuReadfromReg(uint8_t Reg, uint8_t* ReadBuffer, size_t len);
 esp_err_t mpuWriteReg(uint8_t Reg, uint8_t data);
 
 QueueHandle_t mpu_queue;
+QueueHandle_t out_queue;
 
 esp_err_t mpuReadfromReg(uint8_t Reg, uint8_t* ReadBuffer, size_t len){
     return (i2c_master_write_read_device(I2C_NUM, MPU_ADDR, &Reg, 1, ReadBuffer, len, 2000));
@@ -127,8 +139,8 @@ void setup_i2c(){
     ESP_LOGI(TAG_MPU, "Device addr:0x%x", buf);
 }
 
-mpu6050_t* setup_mpu(){
-    mpu6050_t* mpu = (mpu6050_t*)malloc(sizeof(mpu6050_t));
+void setup_mpu(mpu6050_t* mpu){
+	if(mpu == NULL) return;
 
     // Reg 6B is power management 1 -> Clock Source is Internal 8MHz oscillator, temperatura sensor is able, sleep mode is disable.
     mpuWriteReg(MPU6050_REGISTER_PWR_MGMT_1, 0x00);
@@ -140,12 +152,10 @@ mpu6050_t* setup_mpu(){
     mpuWriteReg(MPU6050_REGISTER_GYRO_CONFIG, 0x00);
     mpuWriteReg(MPU6050_REGISTER_ACCEL_CONFIG, 0x00);
     vTaskDelay(pdMS_TO_TICKS(500));
-
-    return mpu;
 }
 
 void setup_sx1276(){
-    if(lora_init() == 0){
+    if(lora_init() == 1){
         ESP_LOGW(TAG_LORA, "SX1276 init failed!");
         return;
     }
@@ -158,18 +168,19 @@ void setup_sx1276(){
 }
 
 void pwm_task(void* pvParameters){
-    int raw;
+    QueueHandle_t output_queue_handle = (QueueHandle_t)pvParameters;
+
+    control_t out_received;
+
     while(true){
-        uint16_t result = adc2_get_raw(ADC2_CHANNEL_3, ADC_WIDTH_BIT_12, &raw);
-        uint8_t dc_percent = (raw*100)/4095;
-        uint32_t dc = (dc_percent * ((1 << PWM_DUTY_RESOLUTION) - 1)) / 100;
+        if(xQueueReceive(output_queue_handle, &out_received, portMAX_DELAY) == pdPASS){
 
-        duty_att(dc, PWM2_TIMER, PWM2_CHANNEL);
+            duty_att(out_received.out[MOTOR_FL], PWM2_CHANNEL);
+            duty_att(out_received.out[MOTOR_FR], PWM1_CHANNEL);
 
-        ESP_LOGI(TAG_PWM,"dc2: %ld", ledc_get_duty(LEDC_HIGH_SPEED_MODE,
-                                                                 PWM2_CHANNEL));
-
-        vTaskDelay(pdMS_TO_TICKS(2000));
+            ESP_LOGI(TAG_PWM,"dc2: %ld", ledc_get_duty(LEDC_HIGH_SPEED_MODE, PWM2_CHANNEL));
+            ESP_LOGI(TAG_PWM,"dc1: %ld", ledc_get_duty(LEDC_HIGH_SPEED_MODE, PWM1_CHANNEL));
+        }
     }
     vTaskDelete(NULL);
 }
@@ -217,36 +228,26 @@ void mpu_task(void* pvParameters){
     uint8_t data_acc[10];
 
     //kalman filter init
-    kalman_filter_t* Kfilter_pitch = (kalman_filter_t*)malloc(sizeof(kalman_filter_t));
-    kalman_filter_t* Kfilter_roll = (kalman_filter_t*)malloc(sizeof(kalman_filter_t));
-    Kfilter_pitch->x[0] = 0;
-    Kfilter_pitch->x[1] = 0;
-    Kfilter_pitch->I[0][0] = 1;
-    Kfilter_pitch->I[0][1] = 0;
-    Kfilter_pitch->I[1][0] = 0;
-    Kfilter_pitch->I[1][1] = 1;
-    Kfilter_pitch->C[0] = 1;
-    Kfilter_pitch->C[1] = 0;
-    Kfilter_pitch->Rv = 0.1;
-    Kfilter_pitch->Rw = 0.01;
-    Kfilter_pitch->Phi[0][0] = 1;
-    Kfilter_pitch->Phi[1][0] = 0;
-    Kfilter_pitch->Phi[1][1] = 1;
-    Kfilter_pitch->Gamma[1] = 1;
-    Kfilter_roll->x[0] = 0;
-    Kfilter_roll->x[1] = 0;
-    Kfilter_roll->I[0][0] = 1;
-    Kfilter_roll->I[0][1] = 0;
-    Kfilter_roll->I[1][0] = 0;
-    Kfilter_roll->I[1][1] = 1;
-    Kfilter_roll->C[0] = 1;
-    Kfilter_roll->C[1] = 0;
-    Kfilter_roll->Rv = 0.1;
-    Kfilter_roll->Rw = 0.01;
-    Kfilter_roll->Phi[0][0] = 1;
-    Kfilter_roll->Phi[1][0] = 0;
-    Kfilter_roll->Phi[1][1] = 1;
-    Kfilter_roll->Gamma[1] = 1;
+
+    kalman_filter_t Kfilter_pitch = {
+      .x = {0, 0},
+      .I = {{1,0}, {0,1}},
+      .C = {1,0},
+      .Rv = 0.1,
+      .Rw = 0.01,
+      .Phi = {{1,0}, {0,1}},
+      .Gamma = {0,1}
+    };
+
+    kalman_filter_t Kfilter_roll = {
+      .x = {0, 0},
+      .I = {{1,0}, {0,1}},
+      .C = {1,0},
+      .Rv = 0.1,
+      .Rw = 0.01,
+      .Phi = {{1,0}, {0,1}},
+      .Gamma = {0,1}
+    };
 
     unsigned long last_time = 0;
 
@@ -292,15 +293,18 @@ void mpu_task(void* pvParameters){
 
 
         //pitch and roll angles by accelerometer
-        mpu->pitch = atan2f(mpu->xg_acc, sqrt(mpu->yg_acc * mpu->yg_acc + mpu->zg_acc * mpu->zg_acc))*180.0/M_PI;
+        mpu->pitch = atan2f(mpu->xg_acc, sqrt(pow(mpu->yg_acc, 2) + pow(mpu->zg_acc, 2)))*180.0/M_PI;
         mpu->roll = atan2f(mpu->yg_acc, mpu->zg_acc)*180.0/M_PI;
 
         //kalman filter apply
-        kalman_filter(Kfilter_pitch, mpu->yg_gyro, mpu->pitch, Ts);
-        kalman_filter(Kfilter_roll, mpu->xg_gyro, mpu->roll, Ts);
+        kalman_filter(&Kfilter_pitch, mpu->yg_gyro, mpu->pitch, Ts);
+        kalman_filter(&Kfilter_roll, mpu->xg_gyro, mpu->roll, Ts);
 
-        mpu->pitch = Kfilter_pitch->x[0];
-        mpu->roll = Kfilter_roll->x[0];
+        mpu->pitch = Kfilter_pitch.x[0];
+        mpu->roll = Kfilter_roll.x[0];
+
+        mpu->pitch += pitch_bias;
+        mpu->roll += roll_bias;
 
         xQueueSend(mpu_queue, mpu, 0);
 
@@ -312,40 +316,56 @@ void mpu_task(void* pvParameters){
         vTaskDelay(pdMS_TO_TICKS(0.1));
     }
     free(mpu);
-    free(Kfilter_roll);
-    free(Kfilter_pitch);
     vTaskDelete(NULL);
 }
 
 void pid_task(void* pvParameters){
     QueueHandle_t mpu_queue_handle = (QueueHandle_t)pvParameters;
 
-    pid_t* pitch_pid = pid_init();
-    pid_t* roll_pid = pid_init();
+    pid_t pitch_pid;
+    pid_init(&pitch_pid);
+    pid_t roll_pid;
+    pid_init(&roll_pid);
 
-    float pitch_pid_out;
-    float roll_pid_out;
+    float pid_pitch_out;
+    float pid_roll_out;
 
     mpu6050_t mpu_received;
-    unsigned long last_time = 0;
+    unsigned long last_time = esp_timer_get_time();
+
+    control_t output;
+    output.throttle = 2040;
+
+    float out_raw[MOTOR];
 
     while(1){
-        if(xQueueReceive(mpu_queue_handle, &mpu_received, portMAX_DELAY) == pdTRUE){
-
+        if(xQueueReceive(mpu_queue_handle, &mpu_received, portMAX_DELAY) == pdPASS){
             unsigned long current_time = esp_timer_get_time();
-            float Ts = (current_time - last_time)/1e6;
+            float Ts = (current_time - last_time)/1e6f;
             last_time = current_time;
 
-            pitch_pid_out = pid_control(pitch_pid, 0.0f, mpu_received.pitch, Ts);
-            roll_pid_out = pid_control(roll_pid, 0.0f, mpu_received.roll, Ts);
+            pid_pitch_out = pid_control(&pitch_pid, 0.0f, mpu_received.pitch, Ts);
+            pid_roll_out = pid_control(&roll_pid, 0.0f, mpu_received.roll, Ts);
 
-            ESP_LOGI(TAG_PID, "Pitch pid:%.2f", pitch_pid_out);
-            ESP_LOGI(TAG_PID, "Roll pid:%.2f", roll_pid_out);
+            out_raw[MOTOR_FL] = output.throttle + pid_pitch_out - pid_roll_out;
+            out_raw[MOTOR_FR] = output.throttle -pid_pitch_out + pid_roll_out;
+
+            if(out_raw[MOTOR_FL] > (1<<PWM_DUTY_RESOLUTION)) out_raw[MOTOR_FL] = (1<<PWM_DUTY_RESOLUTION);
+            else if(out_raw[MOTOR_FL] < 0) out_raw[MOTOR_FL] = 0;
+
+            if(out_raw[MOTOR_FR] > (1<<PWM_DUTY_RESOLUTION)) out_raw[MOTOR_FR] = (1<<PWM_DUTY_RESOLUTION);
+            else if(out_raw[MOTOR_FR] < 0) out_raw[MOTOR_FR] = 0;
+
+            output.out[MOTOR_FL] = out_raw[MOTOR_FL];
+            output.out[MOTOR_FR] = out_raw[MOTOR_FR];
+
+            ESP_LOGI(TAG_PID, "Pitch pid:%.2f", pid_pitch_out);
+            ESP_LOGI(TAG_PID, "Roll pid:%.2f", pid_roll_out);
+
+            xQueueSend(out_queue, &output, 0);
 
         }
     }
-    free(pitch_pid);
-    free(roll_pid);
     vTaskDelete(NULL);
 }
 
@@ -361,6 +381,7 @@ void lorarx_task(void* pvParameters){
         int lost = lora_packet_lost();
         if(lost != 0){
             ESP_LOGW(TAG_LORA, "%d packets lost", lost);
+
         }
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
@@ -370,22 +391,25 @@ void lorarx_task(void* pvParameters){
 
 void app_main(void){
 
-    mpu_queue = xQueueCreate(1, sizeof(mpu6050_t));
+    mpu_queue = xQueueCreate(5, sizeof(mpu6050_t));
+    out_queue = xQueueCreate(1, sizeof(control_t));
 
-    if(mpu_queue == NULL){
+    if(mpu_queue == NULL)
         ESP_LOGE(TAG_MPU, "MPU QUEUE FAIL");
-    }
 
+    if(out_queue == NULL)
+        ESP_LOGE(TAG_PID, "OUTPUT QUEUE FAIL");
     //i2c init
     setup_i2c();
 
     //mpu init
-    mpu6050_t* mpu;
-    mpu = setup_mpu();
+
+    mpu6050_t mpu;
+    setup_mpu(&mpu);
 
     //pwm
-    esp_err_t ret_pwm = setup_pwm(PWM1_PIN, PWM1_CHANNEL, PWM1_TIMER, 5e3);
-    esp_err_t ret_pwm2 = setup_pwm(PWM2_PIN, PWM2_CHANNEL, PWM2_TIMER, 8e3);
+    esp_err_t ret_pwm = setup_pwm(PWM1_PIN, PWM1_CHANNEL, PWM1_TIMER, 1e3);
+    esp_err_t ret_pwm2 = setup_pwm(PWM1_PIN, PWM2_TIMER, PWM2_CHANNEL, 1e3);
     if(ret_pwm != ESP_OK){
         ESP_LOGW(TAG_PWM, "PWM1 init failed!");
         return;
@@ -401,7 +425,7 @@ void app_main(void){
     //lora init
     //setup_sx1276();
 
-    //xTaskCreatePinnedToCore(pwm_task, "TASK PWM", 2000, NULL, 1, NULL, 0);
+    xTaskCreatePinnedToCore(pwm_task, "TASK PWM", 2000, (void*)out_queue, 1, NULL, 0);
     xTaskCreatePinnedToCore(mpu_task, "TASK MPU6050", 3000, (void*)&mpu, 1, NULL, 1);
     xTaskCreatePinnedToCore(pid_task, "TASK PID", 2500, (void*)mpu_queue, 1, NULL, 0);
     //xTaskCreatePinnedToCore(lorarx_task, "TASK LORA TX", 2000, (void*)&mpu, 1, NULL, 1);
