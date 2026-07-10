@@ -4,22 +4,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include "driver/i2c.h"
 #include "esp_err.h"
-#include "hal/i2c_types.h"
 #include "mpu6050_regs.h"
 #include <math.h>
 #include "esp_log.h"
 #include "esp_timer.h"
-
-#define SDA_PIN GPIO_NUM_21
-#define SCL_PIN GPIO_NUM_22
-#define I2C_NUM I2C_NUM_0
-
-typedef unsigned char byte;
+#include "i2c/i2c_dr.h"
 
 #define MPU_ADDR 			0x68
-#define CALIBRATION_SAMPLES 500
+#define CALIBRATION_SAMPLES 5000
 
 static const char* TAG_MPU  = "MPU6050";
 
@@ -47,11 +40,6 @@ typedef struct MPU6050{
     float offset_pitch;
     float offset_roll;
 }mpu6050_t;
-
-esp_err_t mpuReadfromReg(byte Reg, byte* ReadBuffer, size_t len);
-esp_err_t mpuWriteReg(byte Reg, byte data);
-esp_err_t i2c_master_init(void);
-void setup_i2c(void);
 
 void kalman_filter(kalman_filter_t* k, float gyro, float acc_angle, float Ts);
 

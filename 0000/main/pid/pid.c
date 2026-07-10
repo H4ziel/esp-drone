@@ -1,9 +1,10 @@
 #include "pid.h"
+#include "pwm.h"
 
 QueueHandle_t pid_queue;
 
-#define PID_OUT_MAX_US  400.0f
-#define PID_OUT_MIN_US -300.0f
+#define PID_OUT_MAX  400.0f
+#define PID_OUT_MIN -300.0f
 
 float clamp_float(float value, float min, float max){
 	return (value > max) ? max : ((value < min) ? min : value);
@@ -19,8 +20,8 @@ void pid_init(pid_t* p, float KP, float KI, float KD){
     p->i_error = 0.0f;
     p->last_error = 0.0f;
 
-    p->MAX = PID_OUT_MAX_US;
-    p->MIN = PID_OUT_MIN_US;
+    p->MAX = PID_OUT_MAX;
+    p->MIN = PID_OUT_MIN;
 }
 
 float pid_control(pid_t* p, float set_point, float current_meas, float Ts){
@@ -37,8 +38,8 @@ float pid_control(pid_t* p, float set_point, float current_meas, float Ts){
 
     float I = p->ki * p->i_error;
 
-    float I_MAX = p->MAX * 0.2f;
-    float I_MIN = p->MIN * 0.2f;
+    float I_MAX = p->MAX * 0.1f;
+    float I_MIN = p->MIN * 0.1f;
 
     if (I > I_MAX){
         I = I_MAX;
@@ -69,10 +70,11 @@ void pid_task(void* pvParameters){
     QueueHandle_t mpu_queue_handle = (QueueHandle_t)pvParameters;
 
     pid_t pitch_pid;
-    pid_init(&pitch_pid, 15.0f, 0.05f, 2.0f);
+    //zerando o fator derivativo melhorou a resposta do motor
+    pid_init(&pitch_pid, 15.0f, 0.02f, 0.0f);
 
     pid_t roll_pid;
-    pid_init(&roll_pid, 15.0f, 0.05f, 2.0f);
+    pid_init(&roll_pid, 15.0f, 0.2f, 0.0f);
 
     float pid_pitch_out;
     float pid_roll_out;
@@ -83,14 +85,12 @@ void pid_task(void* pvParameters){
 
     control_t pid;
 
-    pid.throttle = 0.0f; // microseconds, initial pulse width
-
+    pid.throttle = 200.0f; // dc base
     float out_raw[N_MOTORs];
 
     while (1) {
-        if (xQueueReceive(mpu_queue_handle, &mpu_received, portMAX_DELAY) == 
+        if (xQueueReceive(mpu_queue_handle, &mpu_received, portMAX_DELAY) ==
 																		pdPASS){
-
             int64_t current_time = esp_timer_get_time();
             float Ts = (current_time - last_time) / 1e6f;
             last_time = current_time;
@@ -98,28 +98,23 @@ void pid_task(void* pvParameters){
             if (Ts <= 0.0f || Ts > 0.1f)
                 Ts = 0.002f;
 
-            pid_pitch_out = pid_control(&pitch_pid, 0.0f, 
+            pid_pitch_out = pid_control(&pitch_pid, 0.0f,
 											 mpu_received.pitch, Ts);
-            pid_roll_out  = pid_control(&roll_pid,  0.0f, 
+            pid_roll_out  = pid_control(&roll_pid,  0.0f,
 									         mpu_received.roll,  Ts);
 
             out_raw[MOTOR_FL] = pid.throttle + pid_pitch_out - pid_roll_out;
             out_raw[MOTOR_FR] = pid.throttle - pid_pitch_out + pid_roll_out;
 
-            out_raw[MOTOR_FL] = clamp_float(out_raw[MOTOR_FL], MOTOR_CMD_MIN, 
-																	MOTOR_CMD_MAX);
-            out_raw[MOTOR_FR] = clamp_float(out_raw[MOTOR_FR], MOTOR_CMD_MIN, 
+            out_raw[MOTOR_FL] = clamp_float(out_raw[MOTOR_FL], MOTOR_CMD_MIN,
+															MOTOR_CMD_MAX);
+            out_raw[MOTOR_FR] = clamp_float(out_raw[MOTOR_FR], MOTOR_CMD_MIN,
 																	MOTOR_CMD_MAX);
 
-            pid.out[MOTOR_FL] = (uint16_t)out_raw[MOTOR_FL];
-            pid.out[MOTOR_FR] = (uint16_t)out_raw[MOTOR_FR];
-			
+            pid.out[MOTOR_FL] = (out_raw[MOTOR_FL] < 30) ? 0 : (uint16_t)out_raw[MOTOR_FL];
+            pid.out[MOTOR_FR] = (out_raw[MOTOR_FR] < 30) ? 0 : (uint16_t)out_raw[MOTOR_FR];
+
 			xQueueSend(pid_queue, &pid, 0);
-
-//            ESP_LOGI(TAG_PID, "Pitch pid: %.2f us", pid_pitch_out);
-//            ESP_LOGI(TAG_PID, "Roll pid: %.2f us", pid_roll_out);
-//            ESP_LOGI(TAG_PID, "FL: %d us | FR: %d us", pid.out[MOTOR_FL],
-//                     									  pid.out[MOTOR_FR]);
         }
     }
 }

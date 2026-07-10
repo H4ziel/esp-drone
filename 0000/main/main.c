@@ -1,15 +1,15 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "freertos/idf_additions.h"
-#include "mpu/mpu.h"
 #include "portmacro.h"
-#include "pwm/pwm.h"
-
 #include "esp_log.h"
 #include "esp_err.h"
-#include "pid/pid.h"
 
-typedef unsigned char byte;
+#include "mpu/mpu.h"
+#include "pid/pid.h"
+#include "pwm/pwm.h"
+#include "i2c/i2c_dr.h"
+#include "display/display.h"
 
 extern volatile bool calibration;
 extern QueueHandle_t mpu_queue;
@@ -33,12 +33,12 @@ void app_main(void){
     mpu6050_t mpu;
     setup_mpu();
     mpu.offset_pitch = 0;
-    mpu.offset_roll = 0;
+//    ESP_ERROR_CHECK(display_init());
 
     //pwm
-    esp_err_t ret_pwm = setup_pwm(PWM1_PIN, PWM1_CHANNEL, PWM1_TIMER, 
+    esp_err_t ret_pwm = setup_pwm(PWM1_PIN, PWM1_TIMER, PWM1_CHANNEL,
 																   PWM_FREQ_HZ);
-    esp_err_t ret_pwm2 = setup_pwm(PWM1_PIN, PWM2_TIMER, PWM2_CHANNEL, 
+    esp_err_t ret_pwm2 = setup_pwm(PWM2_PIN, PWM2_TIMER, PWM2_CHANNEL,
 																   PWM_FREQ_HZ);
     if(ret_pwm != ESP_OK){
         ESP_LOGW(TAG_PWM, "PWM1 init failed!");
@@ -48,13 +48,10 @@ void app_main(void){
         ESP_LOGW(TAG_PWM, "PWM2 init failed!");
         return;
     }
-	
-    xTaskCreatePinnedToCore(pwm_task, "TASK PWM", 2000, (void*)pid_queue, 1, 
+
+    xTaskCreatePinnedToCore(pwm_task, "TASK PWM", 2000, (void*)pid_queue, 1,
 																	   NULL, 0);
-    xTaskCreatePinnedToCore(mpu_task, "TASK MPU6050", 3000, (void*)&mpu, 1, 
-																	   NULL, 1);
-    xTaskCreatePinnedToCore(pid_task, "TASK PID", 2500, (void*)mpu_queue, 1, 
-																	   NULL, 0);
+    xTaskCreatePinnedToCore(mpu_task, "TASK MPU6050", 3000, (void*)&mpu, 1, NULL, 0);
+    xTaskCreatePinnedToCore(pid_task, "TASK PID", 2500, (void*)mpu_queue, 1, NULL, 0);
+    //xTaskCreatePinnedToCore(display_task, "TASK DISPLAY", 2000, (void*)0, 1, NULL, 0);
 }
-
-

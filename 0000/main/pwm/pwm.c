@@ -4,16 +4,10 @@
 #include "freertos/projdefs.h"
 #include "hal/ledc_types.h"
 #include "pid.h"
+#include "soc/clk_tree_defs.h"
 
-esp_err_t setup_pwm(gpio_num_t PWM_PIN, ledc_timer_t PWM_TIMER, 
+esp_err_t setup_pwm(gpio_num_t PWM_PIN, ledc_timer_t PWM_TIMER,
 									 ledc_channel_t PWM_CHANNEL, uint32_t freq){
-
-	uint32_t max_freq_config = 80e6 / (1 << PWM_DUTY_RESOLUTION);
-
-	if(freq > max_freq_config){
-		return ESP_FAIL;
-	}
-
     ledc_timer_config_t timer_config = {
         .speed_mode = LEDC_HIGH_SPEED_MODE,
         .timer_num = PWM_TIMER,
@@ -35,12 +29,11 @@ esp_err_t setup_pwm(gpio_num_t PWM_PIN, ledc_timer_t PWM_TIMER,
         .duty = 0,
         .hpoint = 0
     };
-
     return ledc_channel_config(&channel_config);
 }
 
 static uint32_t motor_cmd_to_duty(uint16_t cmd){
-    return ((uint32_t)clamp_float((float)cmd , 0.0f, (float)PWM_MAX_DUTY) * 
+    return ((uint32_t)clamp_float((float)cmd , 0.0f, (float)MOTOR_CMD_MAX) *
 												  PWM_MAX_DUTY) / MOTOR_CMD_MAX;
 }
 
@@ -56,17 +49,20 @@ void pwm_task(void* pvParameters){
 
     control_t pid_received;
 
-    while (true) {
-        if (xQueueReceive(output_queue_handle, &pid_received, portMAX_DELAY) == 
-																	    pdPASS){
+	int show_meas = 0;
 
+    while (true) {
+        if (xQueueReceive(output_queue_handle, &pid_received, portMAX_DELAY) ==
+																	    pdPASS){
             motor_set_cmd(pid_received.out[MOTOR_FL], PWM2_CHANNEL);
             motor_set_cmd(pid_received.out[MOTOR_FR], PWM1_CHANNEL);
 
-            ESP_LOGI(TAG_PWM, "FL cmd: %d", pid_received.out[MOTOR_FL]);
-            ESP_LOGI(TAG_PWM, "FR cmd: %d", pid_received.out[MOTOR_FR]);
-			
-			vTaskDelay(pdMS_TO_TICKS(2));
+            show_meas++;
+			if(show_meas > 300){
+				ESP_LOGI(TAG_PWM, "FL cmd: %d  | FR cmd: %d ",
+						pid_received.out[MOTOR_FL], pid_received.out[MOTOR_FR]);
+				show_meas = 0;
+			}
         }
     }
 }
