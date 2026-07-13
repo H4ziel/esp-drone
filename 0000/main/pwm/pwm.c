@@ -54,7 +54,7 @@ void pwm_task(void* pvParameters){
     while (true) {
         if (xQueueReceive(output_queue_handle, &pid_received, portMAX_DELAY) ==
 																	    pdPASS){
-            motor_set_cmd(pid_received.out[MOTOR_FL], PWM2_CHANNEL);
+            //motor_set_cmd(pid_received.out[MOTOR_FL], PWM2_CHANNEL);
             motor_set_cmd(pid_received.out[MOTOR_FR], PWM1_CHANNEL);
 
             show_meas++;

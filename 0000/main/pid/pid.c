@@ -85,7 +85,7 @@ void pid_task(void* pvParameters){
 
     control_t pid;
 
-    pid.throttle = 200.0f; // dc base
+    pid.throttle = 0; // dc base
     float out_raw[N_MOTORs];
 
     while (1) {

@@ -10,6 +10,7 @@
 #include "pwm/pwm.h"
 #include "i2c/i2c_dr.h"
 #include "display/display.h"
+#include "lora/lora_dr.h"
 
 extern volatile bool calibration;
 extern QueueHandle_t mpu_queue;
@@ -28,6 +29,9 @@ void app_main(void){
 
     //i2c init
     setup_i2c();
+
+    //lora init
+    setup_sx1276();
 
     //mpu init
     mpu6050_t mpu;
@@ -49,9 +53,10 @@ void app_main(void){
         return;
     }
 
-    xTaskCreatePinnedToCore(pwm_task, "TASK PWM", 2000, (void*)pid_queue, 1,
-																	   NULL, 0);
-    xTaskCreatePinnedToCore(mpu_task, "TASK MPU6050", 3000, (void*)&mpu, 1, NULL, 0);
-    xTaskCreatePinnedToCore(pid_task, "TASK PID", 2500, (void*)mpu_queue, 1, NULL, 0);
+    //xTaskCreatePinnedToCore(pwm_task, "TASK PWM", 2000, (void*)pid_queue, 1,
+	//																   NULL, 0);
+    //xTaskCreatePinnedToCore(mpu_task, "TASK MPU6050", 3000, (void*)&mpu, 1, NULL, 0);
+    //xTaskCreatePinnedToCore(pid_task, "TASK PID", 2500, (void*)mpu_queue, 1, NULL, 0);
     //xTaskCreatePinnedToCore(display_task, "TASK DISPLAY", 2000, (void*)0, 1, NULL, 0);
+    xTaskCreatePinnedToCore(lora_rx_task, "TASK RX LORA", 1500, NULL, 1, NULL, 1);
 }
