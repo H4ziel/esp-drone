@@ -100,7 +100,7 @@ void pid_task(void* pvParameters){
             if (Ts <= 0.0f || Ts > 0.1f)
                 Ts = 0.002f;
 
-            xQueueReceive(pid_params_handle->lora, &pid, 0)
+            xQueueReceive(pid_params_handle->lora, &pid, 0);
 
             pid_pitch_out = pid_control(&pitch_pid, 0.0f,
 											 mpu_received.orientation.pitch, Ts);
