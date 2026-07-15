@@ -7,6 +7,7 @@
 #include "esp_err.h"
 #include "stdint.h"
 #include "freertos/FreeRTOS.h"
+#include "pwm.h"
 
 #define LORA_CODING_RATE 1
 #define LORA_BANDWIDTH 7

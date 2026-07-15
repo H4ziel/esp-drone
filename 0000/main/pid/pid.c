@@ -1,4 +1,6 @@
 #include "pid.h"
+#include "freertos/idf_additions.h"
+#include "freertos/projdefs.h"
 #include "pwm.h"
 
 QueueHandle_t pid_queue;
@@ -67,7 +69,7 @@ float pid_control(pid_t* p, float set_point, float current_meas, float Ts){
 }
 
 void pid_task(void* pvParameters){
-    QueueHandle_t mpu_queue_handle = (QueueHandle_t)pvParameters;
+    pid_task_param_t* pid_params_handle = (pid_task_param_t*)pvParameters;
 
     pid_t pitch_pid;
     //zerando o fator derivativo melhorou a resposta do motor
@@ -89,7 +91,7 @@ void pid_task(void* pvParameters){
     float out_raw[N_MOTORs];
 
     while (1) {
-        if (xQueueReceive(mpu_queue_handle, &mpu_received, portMAX_DELAY) ==
+        if (xQueueReceive(pid_params_handle->mpu, &mpu_received, portMAX_DELAY) ==
 																		pdPASS){
             int64_t current_time = esp_timer_get_time();
             float Ts = (current_time - last_time) / 1e6f;
@@ -98,10 +100,12 @@ void pid_task(void* pvParameters){
             if (Ts <= 0.0f || Ts > 0.1f)
                 Ts = 0.002f;
 
+            xQueueReceive(pid_params_handle->lora, &pid, 0)
+
             pid_pitch_out = pid_control(&pitch_pid, 0.0f,
-											 mpu_received.pitch, Ts);
+											 mpu_received.orientation.pitch, Ts);
             pid_roll_out  = pid_control(&roll_pid,  0.0f,
-									         mpu_received.roll,  Ts);
+									         mpu_received.orientation.roll,  Ts);
 
             out_raw[MOTOR_FL] = pid.throttle + pid_pitch_out - pid_roll_out;
             out_raw[MOTOR_FR] = pid.throttle - pid_pitch_out + pid_roll_out;

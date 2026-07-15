@@ -15,11 +15,17 @@
 extern volatile bool calibration;
 extern QueueHandle_t mpu_queue;
 extern QueueHandle_t pid_queue;
+extern QueueHandle_t lora_queue;
 
 void app_main(void){
 
     mpu_queue = xQueueCreate(5, sizeof(mpu6050_t));
     pid_queue = xQueueCreate(1, sizeof(control_t));
+    lora_queue = xQueueCreate(1, sizeof(control_t));
+
+    static pid_task_param_t pid_params_queue;
+    pid_params_queue.lora = lora_queue;
+    pid_params_queue.mpu = mpu_queue;
 
     if(mpu_queue == NULL)
         ESP_LOGE(TAG_MPU, "MPU QUEUE FAIL");
@@ -36,7 +42,10 @@ void app_main(void){
     //mpu init
     mpu6050_t mpu;
     setup_mpu();
-    mpu.offset_pitch = 0;
+    mpu.offset_orientation.roll = 0;
+    mpu.offset_orientation.pitch = 0;
+    mpu.offset_orientation.yaw = 0;
+
 //    ESP_ERROR_CHECK(display_init());
 
     //pwm
@@ -53,10 +62,9 @@ void app_main(void){
         return;
     }
 
-    //xTaskCreatePinnedToCore(pwm_task, "TASK PWM", 2000, (void*)pid_queue, 1,
-	//																   NULL, 0);
-    //xTaskCreatePinnedToCore(mpu_task, "TASK MPU6050", 3000, (void*)&mpu, 1, NULL, 0);
-    //xTaskCreatePinnedToCore(pid_task, "TASK PID", 2500, (void*)mpu_queue, 1, NULL, 0);
+    xTaskCreatePinnedToCore(pwm_task, "TASK PWM", 2000, (void*)pid_queue, 1,NULL, 0);
+    xTaskCreatePinnedToCore(mpu_task, "TASK MPU6050", 3000, (void*)&mpu, 1, NULL, 0);
+    xTaskCreatePinnedToCore(pid_task, "TASK PID", 2500, (void*)&pid_params_queue, 1, NULL, 0);
     //xTaskCreatePinnedToCore(display_task, "TASK DISPLAY", 2000, (void*)0, 1, NULL, 0);
     xTaskCreatePinnedToCore(lora_rx_task, "TASK RX LORA", 1500, NULL, 1, NULL, 1);
 }

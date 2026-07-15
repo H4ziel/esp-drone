@@ -14,6 +14,11 @@ typedef struct PID{
     float i_error, MAX, MIN, last_error;
 }pid_t;
 
+typedef struct{
+    QueueHandle_t mpu;
+    QueueHandle_t lora;
+}pid_task_param_t;
+
 const static char* TAG_PID = "PID";
 
 float clamp_float(float value, float min, float max);

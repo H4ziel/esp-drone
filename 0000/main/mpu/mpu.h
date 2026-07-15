@@ -20,9 +20,7 @@ typedef struct {
     float Rv;      // noise by measurements, accelerometer
     float Rw;      // noise by angle/model
     float Rw_bias; // noise by gyro bias
-
     float x[2];    // x[0] = angle, x[1] = gyro bias
-
     float P[2][2]; // covariance matrix
     float K[2];    // Kalman gain
 } kalman_filter_t;
@@ -32,13 +30,17 @@ typedef struct{
     kalman_filter_t* pitch;
 }k_filter_orientation_t;
 
-typedef struct MPU6050{
-    float roll;
+typedef struct{
     float pitch;
+    float roll;
     float yaw;
+}orientation_t;
+
+typedef struct MPU6050{
+    orientation_t orientation;
+    orientation_t offset_orientation;
+    orientation_t setpoint_orientation;
     float temp;
-    float offset_pitch;
-    float offset_roll;
 }mpu6050_t;
 
 void kalman_filter(kalman_filter_t* k, float gyro, float acc_angle, float Ts);

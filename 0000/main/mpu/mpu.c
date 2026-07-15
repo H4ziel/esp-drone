@@ -95,30 +95,30 @@ bool get_orientation(mpu6050_t* mpu, k_filter_orientation_t* k, float Ts){
     mpu->temp = (((float)(temp_raw)/340)+36.53);
 
     //pitch and roll angles by accelerometer
-    mpu->pitch = atan2f(xg_acc, sqrtf((yg_acc * yg_acc) + (zg_acc * zg_acc))) *
+    mpu->orientation.pitch = atan2f(xg_acc, sqrtf((yg_acc * yg_acc) + (zg_acc * zg_acc))) *
 																	 180.0/M_PI;
-    mpu->roll = atan2f(yg_acc, zg_acc)*180.0/M_PI;
+    mpu->orientation.roll = atan2f(yg_acc, zg_acc)*180.0/M_PI;
 
     //kalman filter apply
-    kalman_filter(k->pitch, yg_gyro, mpu->pitch, Ts);
-    kalman_filter(k->roll, xg_gyro, mpu->roll, Ts);
+    kalman_filter(k->pitch, yg_gyro, mpu->orientation.pitch, Ts);
+    kalman_filter(k->roll, xg_gyro, mpu->orientation.roll, Ts);
 
-    mpu->pitch = k->pitch->x[0];
-    mpu->roll = k->roll->x[0];
+    mpu->orientation.pitch = k->pitch->x[0];
+    mpu->orientation.roll = k->roll->x[0];
 
     if(!calibration){
-        mpu->offset_roll  += mpu->roll;
-        mpu->offset_pitch += mpu->pitch;
+        mpu->offset_orientation.roll  += mpu->orientation.roll;
+        mpu->offset_orientation.pitch += mpu->orientation.pitch;
         iter++;
         if(iter >= CALIBRATION_SAMPLES){
-            mpu->offset_pitch /= (float)CALIBRATION_SAMPLES;
-            mpu->offset_roll  /= (float)CALIBRATION_SAMPLES;
+            mpu->offset_orientation.pitch /= (float)CALIBRATION_SAMPLES;
+            mpu->offset_orientation.roll  /= (float)CALIBRATION_SAMPLES;
             calibration = true;
             iter = 0;
         }
     }else{
-        mpu->pitch -= mpu->offset_pitch;
-        mpu->roll  -= mpu->offset_roll;
+        mpu->orientation.pitch -= mpu->offset_orientation.pitch;
+        mpu->orientation.roll  -= mpu->offset_orientation.roll;
     }
 
     return calibration;
